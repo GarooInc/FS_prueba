@@ -25,15 +25,17 @@ app.add_middleware(
 
 # Directorios seguros
 FILES_DIR = Path("files").resolve()
-AGENTS_DIR = FILES_DIR / "fel-agents"
+FEL_AGENTS_DIR = FILES_DIR / "fel-agents"
+ITZANA_AGENTS_DIR = FILES_DIR / "itzana-agents"
 os.makedirs(FILES_DIR, exist_ok=True)
-os.makedirs(AGENTS_DIR, exist_ok=True)
+os.makedirs(ITZANA_AGENTS_DIR, exist_ok=True)
+os.makedirs(FEL_AGENTS_DIR, exist_ok=True)
 
 # Cargar base URL desde variable de entorno
 BASE_URL = os.getenv("BASE_URL", "http://localhost:8000")
 
 # Tipos MIME permitidos
-ALLOWED_MIME_TYPES = ["image/jpeg", "image/png", "application/pdf", "text/plain"]
+ALLOWED_MIME_TYPES = ["image/jpeg", "image/png", "application/pdf", "text/plain", "image/jpg"]
 
 # Helper para validar rutas y evitar path traversal
 def is_safe_path(base_dir: Path, target: Path) -> bool:
@@ -83,7 +85,7 @@ async def upload_fel_agent_file(file: UploadFile = File(...)):
     # Obtener extensión original
     _, ext = os.path.splitext(file.filename)
     new_filename = f"{uuid.uuid4()}{ext}"
-    file_path = AGENTS_DIR / new_filename
+    file_path = FEL_AGENTS_DIR / new_filename
 
     if file_path.name.startswith("."):
         raise HTTPException(status_code=400, detail="Nombre de archivo no permitido")
@@ -98,6 +100,31 @@ async def upload_fel_agent_file(file: UploadFile = File(...)):
         "url": file_url
     }
 
+
+@app.post("/upload/itzana-agents")
+async def upload_fel_agent_file(file: UploadFile = File(...)):
+    """
+    Sube un archivo al servidor en 'files/itzana-agents/'.
+    - Cambia el nombre a UUID
+    - Devuelve la URL completa para acceder al archivo
+    """
+    # Obtener extensión original
+    _, ext = os.path.splitext(file.filename)
+    new_filename = f"{uuid.uuid4()}{ext}"
+    file_path = ITZANA_AGENTS_DIR / new_filename
+
+    if file_path.name.startswith("."):
+        raise HTTPException(status_code=400, detail="Nombre de archivo no permitido")
+
+    with open(file_path, "wb") as f:
+        f.write(await file.read())
+
+    file_url = f"{BASE_URL}/files/itzana-agents/{new_filename}"
+
+    return {
+        "message": f"Archivo subido correctamente como '{new_filename}'",
+        "url": file_url
+    }
 
 @app.get("/files", response_model=List[str])
 def list_files():

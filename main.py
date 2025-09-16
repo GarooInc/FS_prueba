@@ -35,7 +35,15 @@ os.makedirs(FEL_AGENTS_DIR, exist_ok=True)
 BASE_URL = os.getenv("BASE_URL", "http://localhost:8000")
 
 # Tipos MIME permitidos
-ALLOWED_MIME_TYPES = ["image/jpeg", "image/png", "application/pdf", "text/plain", "image/jpg"]
+ALLOWED_MIME_TYPES = [
+    "image/jpeg",
+    "image/png",
+    "application/pdf",
+    "text/plain",
+    "image/jpg",
+    "application/xml",
+    "text/xml"
+]
 
 # Helper para validar rutas y evitar path traversal
 def is_safe_path(base_dir: Path, target: Path) -> bool:

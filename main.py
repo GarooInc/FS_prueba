@@ -7,6 +7,8 @@ import uuid
 from dotenv import load_dotenv
 import mimetypes
 from pathlib import Path
+import json
+from datetime import datetime
 
 # Cargar variables de entorno
 load_dotenv()
@@ -27,9 +29,11 @@ app.add_middleware(
 FILES_DIR = Path("files").resolve()
 FEL_AGENTS_DIR = FILES_DIR / "fel-agents"
 ITZANA_AGENTS_DIR = FILES_DIR / "itzana-agents"
+TEST_DIR = Path("test").resolve()
 os.makedirs(FILES_DIR, exist_ok=True)
 os.makedirs(ITZANA_AGENTS_DIR, exist_ok=True)
 os.makedirs(FEL_AGENTS_DIR, exist_ok=True)
+os.makedirs(TEST_DIR, exist_ok=True)
 
 # Cargar base URL desde variable de entorno
 BASE_URL = os.getenv("BASE_URL", "http://localhost:8000")
@@ -167,3 +171,30 @@ def get_file(subdir: str, filename: str):
         path=str(file_path),
         media_type=mime_type
     )
+
+
+@app.post("/webhook")
+async def webhook(request: Request):
+    """
+    Endpoint webhook que acepta cualquier POST con body JSON 
+    y lo guarda en un archivo txt en la carpeta test/.
+    """
+    try:
+        # Recibir el body JSON
+        body = await request.json()
+        
+        # Generar un nombre único para el archivo
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"webhook_{timestamp}_{uuid.uuid4().hex[:8]}.txt"
+        file_path = TEST_DIR / filename
+        
+        # Guardar el JSON en el archivo txt
+        with open(file_path, "w", encoding="utf-8") as f:
+            json.dump(body, f, indent=2, ensure_ascii=False)
+        
+        return {
+            "message": "Webhook recibido y guardado correctamente",
+            "filename": filename
+        }
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Error procesando webhook: {str(e)}")

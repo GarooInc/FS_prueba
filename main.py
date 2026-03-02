@@ -9,6 +9,7 @@ import mimetypes
 from pathlib import Path
 import json
 from datetime import datetime
+import httpx
 
 # Cargar variables de entorno
 load_dotenv()
@@ -37,6 +38,11 @@ os.makedirs(TEST_DIR, exist_ok=True)
 
 # Cargar base URL desde variable de entorno
 BASE_URL = os.getenv("BASE_URL", "http://localhost:8000")
+
+# Variables de la API externa
+API_BASE_URL = os.getenv("API_BASE_URL", "")
+API_USER = os.getenv("API_USER", "")
+API_PASSWORD = os.getenv("API_PASSWORD", "")
 
 # Tipos MIME permitidos
 ALLOWED_MIME_TYPES = [
@@ -176,25 +182,123 @@ def get_file(subdir: str, filename: str):
 @app.post("/webhook")
 async def webhook(request: Request):
     """
-    Endpoint webhook que acepta cualquier POST con body JSON 
-    y lo guarda en un archivo txt en la carpeta test/.
+    Endpoint webhook que:
+    1. Recibe un POST con body JSON (datos de Shopify)
+    2. Obtiene un token de autenticación de la API
+    3. Envía los datos a la API de facturación
+    4. Guarda todo el proceso en un archivo txt
     """
+    log_data = {
+        "timestamp": datetime.now().isoformat(),
+        "request_received": None,
+        "token_request": None,
+        "facturar_request": None,
+        "facturar_response": None,
+        "error": None
+    }
+    
     try:
-        # Recibir el body JSON
+        # 1. Recibir el body JSON
         body = await request.json()
+        log_data["request_received"] = body
         
-        # Generar un nombre único para el archivo
+        # Validar que tenemos las credenciales configuradas
+        if not API_BASE_URL or not API_USER or not API_PASSWORD:
+            raise HTTPException(
+                status_code=500, 
+                detail="Variables de entorno de la API no configuradas"
+            )
+        
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            # 2. Obtener token de autenticación
+            token_url = f"{API_BASE_URL}/api/Token"
+            token_payload = {
+                "usuario": API_USER,
+                "clave": API_PASSWORD
+            }
+            
+            log_data["token_request"] = {
+                "url": token_url,
+                "payload": {"usuario": API_USER, "clave": "***"}
+            }
+            
+            token_response = await client.post(
+                token_url,
+                json=token_payload,
+                headers={"Content-Type": "application/json"}
+            )
+            
+            if token_response.status_code != 200:
+                raise HTTPException(
+                    status_code=token_response.status_code,
+                    detail=f"Error obteniendo token: {token_response.text}"
+                )
+            
+            token_data = token_response.json()
+            access_token = token_data.get("data")
+            
+            if not access_token:
+                raise HTTPException(
+                    status_code=500,
+                    detail="Token no recibido en la respuesta"
+                )
+            
+            log_data["token_request"]["status"] = token_response.status_code
+            log_data["token_request"]["success"] = True
+            
+            # 3. Enviar datos a /api/Facturar
+            facturar_url = f"{API_BASE_URL}/api/Facturar"
+            
+            # Asegurarnos de que body sea un array
+            payload = body if isinstance(body, list) else [body]
+            
+            log_data["facturar_request"] = {
+                "url": facturar_url,
+                "payload_count": len(payload)
+            }
+            
+            facturar_response = await client.post(
+                facturar_url,
+                json=payload,
+                headers={
+                    "Content-Type": "application/json",
+                    "Authorization": f"Bearer {access_token}"
+                }
+            )
+            
+            log_data["facturar_response"] = {
+                "status_code": facturar_response.status_code,
+                "response": facturar_response.text
+            }
+            
+            if facturar_response.status_code not in [200, 201]:
+                log_data["error"] = f"Error en facturación: Status {facturar_response.status_code}"
+        
+        # 4. Guardar log completo en archivo
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = f"webhook_{timestamp}_{uuid.uuid4().hex[:8]}.txt"
         file_path = TEST_DIR / filename
         
-        # Guardar el JSON en el archivo txt
         with open(file_path, "w", encoding="utf-8") as f:
-            json.dump(body, f, indent=2, ensure_ascii=False)
+            json.dump(log_data, f, indent=2, ensure_ascii=False)
         
         return {
-            "message": "Webhook recibido y guardado correctamente",
-            "filename": filename
+            "message": "Webhook procesado correctamente",
+            "filename": filename,
+            "facturar_status": log_data["facturar_response"]["status_code"]
         }
+        
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Error procesando webhook: {str(e)}")
+        log_data["error"] = str(e)
+        
+        # Guardar log con error
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"webhook_error_{timestamp}_{uuid.uuid4().hex[:8]}.txt"
+        file_path = TEST_DIR / filename
+        
+        with open(file_path, "w", encoding="utf-8") as f:
+            json.dump(log_data, f, indent=2, ensure_ascii=False)
+        
+        raise HTTPException(status_code=500, detail=f"Error procesando webhook: {str(e)}")

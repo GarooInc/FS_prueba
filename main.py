@@ -245,6 +245,10 @@ async def webhook(request: Request):
             
             log_data["token_request"]["status"] = token_response.status_code
             log_data["token_request"]["success"] = True
+            log_data["token_request"]["response"] = {
+                "headers": dict(token_response.headers),
+                "body": token_data
+            }
             
             # 3. Enviar datos a /api/Facturar
             facturar_url = f"{API_BASE_URL}/api/Facturar"
@@ -266,9 +270,17 @@ async def webhook(request: Request):
                 }
             )
             
+            # Intentar parsear el response como JSON
+            try:
+                facturar_response_body = facturar_response.json()
+            except:
+                facturar_response_body = facturar_response.text
+            
             log_data["facturar_response"] = {
                 "status_code": facturar_response.status_code,
-                "response": facturar_response.text
+                "headers": dict(facturar_response.headers),
+                "body": facturar_response_body,
+                "raw_text": facturar_response.text
             }
             
             if facturar_response.status_code not in [200, 201]:

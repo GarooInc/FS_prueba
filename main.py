@@ -179,19 +179,77 @@ def get_file(subdir: str, filename: str):
     )
 
 
+# Funciones auxiliares para procesamiento de órdenes
+def is_pickup_caes(order: dict) -> bool:
+    """
+    Detecta si una orden es Pickup CAES según las reglas:
+    - shipping_address es null
+    - shipping_lines existe y tiene al menos 1 elemento
+    - shipping_lines[0].price es "0.00"
+    - code y title son "Injerto Carretera A El Salvador"
+    """
+    shipping_address = order.get("shipping_address")
+    shipping_lines = order.get("shipping_lines") or []
+
+    if shipping_address is not None:
+        return False
+    if not shipping_lines:
+        return False
+
+    sl = shipping_lines[0]
+
+    return (
+        str(sl.get("price")) == "0.00"
+        and sl.get("code") == "Injerto Carretera A El Salvador"
+        and sl.get("title") == "Injerto Carretera A El Salvador"
+    )
+
+
+def add_caes_tag(order: dict) -> dict:
+    """
+    Agrega el tag "CAES" a una orden si no lo tiene ya.
+    Shopify tags es un string tipo "tag1, tag2".
+    """
+    tags_str = (order.get("tags") or "").strip()
+
+    # Convertir a lista limpia
+    tags = [t.strip() for t in tags_str.split(",") if t.strip()]
+
+    # Evitar duplicados
+    if "CAES" not in tags:
+        tags.append("CAES")
+
+    order["tags"] = ", ".join(tags)
+    return order
+
+
 @app.post("/webhook")
 async def webhook(request: Request):
     """
     Endpoint webhook que recibe un POST con body JSON y lo guarda en un archivo txt.
     Las peticiones a la API externa están desactivadas.
+    Aplica lógica de detección de Pickup CAES y agrega tag automáticamente.
     """
     try:
         # Recibir el body JSON
         body = await request.json()
         
+        # Detectar y procesar Pickup CAES
+        is_caes = False
+        tags_added = False
+        
+        if is_pickup_caes(body):
+            is_caes = True
+            original_tags = body.get("tags", "")
+            body = add_caes_tag(body)
+            tags_added = original_tags != body.get("tags")
+        
         log_data = {
             "timestamp": datetime.now().isoformat(),
             "request_received": body,
+            "pickup_caes_detected": is_caes,
+            "caes_tag_added": tags_added,
+            "final_tags": body.get("tags", ""),
             "note": "API calls disabled"
         }
         
@@ -206,6 +264,8 @@ async def webhook(request: Request):
         return {
             "message": "Webhook recibido y guardado correctamente",
             "filename": filename,
+            "pickup_caes_detected": is_caes,
+            "caes_tag_added": tags_added,
             "note": "API integration disabled"
         }
         

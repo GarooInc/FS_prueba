@@ -10,6 +10,7 @@ from pathlib import Path
 import json
 from datetime import datetime
 import httpx
+import copy
 
 # Cargar variables de entorno
 load_dotenv()
@@ -228,19 +229,25 @@ async def webhook(request: Request):
     """
     Endpoint webhook que:
     1. Recibe un POST con body JSON (datos de Shopify)
-    2. Detecta y procesa Pickup CAES (agrega tag automáticamente)
+    2. Detecta Pickup CAES y agrega tag "CAES" SOLO si no existe ya
     3. Obtiene un token de autenticación de la API
-    4. Envía los datos a la API de facturación
+    4. Envía los datos (con tag CAES agregado si aplicó) a la API de facturación
     5. Guarda todo el proceso en un archivo txt
+    
+    IMPORTANTE: Si la orden YA trae el tag "CAES", NO se modifica nada.
+    Solo se agrega el tag si es Pickup CAES y aún no lo tiene.
     """
     log_data = {
         "timestamp": datetime.now().isoformat(),
         "request_received": None,
         "pickup_caes_detected": False,
+        "caes_tag_already_present": False,
         "caes_tag_added": False,
+        "original_tags": "",
         "final_tags": "",
         "token_request": None,
         "facturar_request": None,
+        "payload_sent_to_api": None,
         "facturar_response": None,
         "error": None
     }
@@ -248,15 +255,25 @@ async def webhook(request: Request):
     try:
         # 1. Recibir el body JSON
         body = await request.json()
-        log_data["request_received"] = body
+        log_data["request_received"] = copy.deepcopy(body)
+        log_data["original_tags"] = body.get("tags", "")
         
         # 2. Detectar y procesar Pickup CAES
         if is_pickup_caes(body):
             log_data["pickup_caes_detected"] = True
             original_tags = body.get("tags", "")
-            body = add_caes_tag(body)
-            log_data["caes_tag_added"] = original_tags != body.get("tags")
-            log_data["final_tags"] = body.get("tags", "")
+            
+            # Verificar si ya tiene el tag CAES
+            existing_tags = [t.strip() for t in original_tags.split(",") if t.strip()]
+            if "CAES" in existing_tags:
+                log_data["caes_tag_already_present"] = True
+                log_data["caes_tag_added"] = False
+                log_data["final_tags"] = original_tags
+            else:
+                # Solo agregar si no existe
+                body = add_caes_tag(body)
+                log_data["caes_tag_added"] = True
+                log_data["final_tags"] = body.get("tags", "")
         
         # Validar que tenemos las credenciales configuradas
         if not API_BASE_URL or not API_USER or not API_PASSWORD:
@@ -312,9 +329,13 @@ async def webhook(request: Request):
             # Asegurarnos de que body sea un array
             payload = body if isinstance(body, list) else [body]
             
+            # Guardar el payload EXACTO que se envía (para verificación)
+            log_data["payload_sent_to_api"] = copy.deepcopy(payload)
+            
             log_data["facturar_request"] = {
                 "url": facturar_url,
-                "payload_count": len(payload)
+                "payload_count": len(payload),
+                "note": "Payload includes CAES tag if detected"
             }
             
             facturar_response = await client.post(
@@ -354,6 +375,7 @@ async def webhook(request: Request):
             "message": "Webhook procesado correctamente",
             "filename": filename,
             "pickup_caes_detected": log_data["pickup_caes_detected"],
+            "caes_tag_already_present": log_data["caes_tag_already_present"],
             "caes_tag_added": log_data["caes_tag_added"],
             "facturar_status": log_data["facturar_response"]["status_code"]
         }
